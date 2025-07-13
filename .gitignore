@@ -1,2 +1,4 @@
 pkg/
 *-handin.tar.gz
+.idea
+src/main/mr-out-0
