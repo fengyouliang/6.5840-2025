@@ -22,8 +22,29 @@ type ExampleReply struct {
 	Y int
 }
 
-// Add your RPC definitions here.
+type WorkerArgs struct {
+	ID            int
+	File          string
+	OptionType    int
+	NumReduce     int
+	status        int // 0: no start, 1: map processing, 2: map done, 3: reduce processing, 4: reduce done
+	TempFileNames []string
 
+	ReduceIndex int
+}
+
+type WorkerReply struct {
+	ID         int
+	File       string
+	OptionType int
+	NumReduce  int
+	status     int // 0: no start, 1: map processing, 2: map done, 3: reduce processing, 4: reduce done
+
+	ReduceIndex int
+	NumMapper   int
+}
+
+// Add your RPC definitions here.
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.

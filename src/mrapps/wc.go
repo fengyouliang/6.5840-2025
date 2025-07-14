@@ -3,10 +3,16 @@ package main
 //
 // a word-count application "plugin" for MapReduce.
 //
+// Goland Run
 // go build -buildmode=plugin wc.go
+// Goland Debug
+// go build -gcflags="all=-N -l" -buildmode=plugin -o wc.so ../mrapps/wc.go
 //
 
-import "6.5840/mr"
+import (
+	"6.5840/mr"
+	"fmt"
+)
 import "unicode"
 import "strings"
 import "strconv"
@@ -37,4 +43,52 @@ func Map(filename string, contents string) []mr.KeyValue {
 func Reduce(key string, values []string) string {
 	// return the number of occurrences of this word.
 	return strconv.Itoa(len(values))
+}
+
+func main() {
+	// 测试 Map 函数
+	fmt.Println("===== 测试 Map 函数 =====")
+	testContent := "Hello world! Hello MapReduce. This is a test."
+	fmt.Printf("输入文本: %q\n", testContent)
+
+	kva := Map("test.txt", testContent)
+	fmt.Println("Map 输出:")
+	for i, kv := range kva {
+		fmt.Printf("%d: %v\n", i+1, kv)
+	}
+
+	// 测试 Reduce 函数
+	fmt.Println("\n===== 测试 Reduce 函数 =====")
+	testCases := []struct {
+		key    string
+		values []string
+	}{
+		{"apple", []string{"1", "1", "1"}},
+		{"banana", []string{"1", "1"}},
+		{"cherry", []string{"1"}},
+		{"date", []string{}}, // 空值测试
+	}
+
+	for _, tc := range testCases {
+		result := Reduce(tc.key, tc.values)
+		fmt.Printf("Reduce(%q, %v) = %q\n", tc.key, tc.values, result)
+	}
+
+	// 完整流程演示
+	fmt.Println("\n===== 完整流程演示 =====")
+	wordCounts := make(map[string]int)
+	for _, kv := range kva {
+		wordCounts[kv.Key]++ // 模拟 MapReduce 的 shuffle 阶段
+	}
+
+	fmt.Println("最终计数结果:")
+	for word, count := range wordCounts {
+		// 模拟调用 Reduce 函数
+		values := make([]string, count)
+		for i := 0; i < count; i++ {
+			values[i] = "1"
+		}
+		result := Reduce(word, values)
+		fmt.Printf("%s: %s\n", word, result)
+	}
 }
