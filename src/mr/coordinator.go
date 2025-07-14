@@ -2,71 +2,121 @@ package mr
 
 import (
 	"log"
+	"net"
+	"net/http"
+	"net/rpc"
+	"os"
 	"sync"
 	"time"
 )
-import "net"
-import "os"
-import "net/rpc"
-import "net/http"
-
-type Coordinator struct {
-	// Your definitions here.
-	files   []string
-	nReduce int
-	tasks   []task
-	mu      sync.Mutex
-
-	ReduceMap map[int]bool
-}
 
 type task struct {
 	id        int
 	file      string
+	status    int // 0: not started, 1: in progress, 2: completed
 	startTime time.Time
-	status    int // 0: no start, 1: map processing, 2: map done, 3: reduce processing, 4: reduce done
 }
 
-// Your code here -- RPC handlers for the worker to call.
+type Coordinator struct {
+	mu                  sync.Mutex
+	files               []string
+	nReduce             int
+	tasks               []task
+	mapTimeout          time.Duration
+	reduceTimeout       time.Duration
+	mapPhaseComplete    bool
+	reducePhaseComplete bool
+	ReduceMap           map[int]int // reduce task status: 0=not started, 1=in progress, 2=completed
+	reduceStartTime     map[int]time.Time
+}
 
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
-	reply.Y = args.X + 1
-	return nil
+func MakeCoordinator(files []string, nReduce int) *Coordinator {
+	c := Coordinator{
+		files:               files,
+		nReduce:             nReduce,
+		mapTimeout:          10 * time.Second,
+		reduceTimeout:       10 * time.Second,
+		mapPhaseComplete:    false,
+		reducePhaseComplete: false,
+		ReduceMap:           make(map[int]int),
+		reduceStartTime:     make(map[int]time.Time),
+	}
+
+	// Initialize tasks
+	for i, file := range files {
+		c.tasks = append(c.tasks, task{
+			id:     i,
+			file:   file,
+			status: 0,
+		})
+	}
+
+	// Initialize reduce tasks
+	for i := 0; i < nReduce; i++ {
+		c.ReduceMap[i] = 0
+	}
+
+	log.Printf("Coordinator: Initialized with %d map tasks and %d reduce tasks", len(c.tasks), nReduce)
+	c.server()
+	return &c
 }
 
 func (c *Coordinator) WorkerRequest(args *WorkerArgs, reply *WorkerReply) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if !c.doneByStage(2) {
-		for i := range c.tasks {
-			if c.tasks[i].status == 0 {
-				reply.File = c.tasks[i].file
-				reply.OptionType = 0
-				reply.NumReduce = c.nReduce
-				c.tasks[i].status = 1
-				c.tasks[i].startTime = time.Now()
-				reply.ID = c.tasks[i].id
-				return nil
-			}
+	// Check for timed out tasks
+	c.checkTimeouts()
+
+	// Handle map phase
+	if !c.mapPhaseComplete {
+		if task := c.getAvailableMapTask(); task != nil {
+			reply.ID = task.id
+			reply.File = task.file
+			reply.OptionType = 0 // Map task
+			reply.NumReduce = c.nReduce
+
+			task.status = 1
+			task.startTime = time.Now()
+
+			log.Printf("Coordinator: Assigned map task %d (file: %s) to worker", task.id, task.file)
+			return nil
 		}
-	} else {
-		if !c.doneByStage(4) {
-			for reduceIdx, flag := range c.ReduceMap {
-				if !flag {
-					reply.OptionType = 1
-					reply.ReduceIndex = reduceIdx
-					reply.NumMapper = len(c.files)
-					return nil
-				}
-			}
+
+		if c.allMapTasksCompleted() {
+			c.mapPhaseComplete = true
+			log.Printf("Coordinator: All map tasks completed, starting reduce phase")
 		} else {
-			reply.OptionType = 3
+			reply.OptionType = 2 // Wait
+			return nil
 		}
 	}
+
+	// Handle reduce phase
+	if c.mapPhaseComplete && !c.reducePhaseComplete {
+		if reduceIdx := c.getAvailableReduceTask(); reduceIdx != -1 {
+			reply.OptionType = 1 // Reduce task
+			reply.ReduceIndex = reduceIdx
+			reply.NumMapper = len(c.files)
+
+			c.ReduceMap[reduceIdx] = 1
+			c.reduceStartTime[reduceIdx] = time.Now()
+
+			log.Printf("Coordinator: Assigned reduce task %d to worker", reduceIdx)
+			return nil
+		}
+
+		if c.allReduceTasksCompleted() {
+			c.reducePhaseComplete = true
+			log.Printf("Coordinator: All reduce tasks completed")
+		} else {
+			reply.OptionType = 2 // Wait
+			return nil
+		}
+	}
+
+	// All tasks completed
+	reply.OptionType = 3 // Done
 	return nil
 }
 
@@ -74,23 +124,88 @@ func (c *Coordinator) WorkerComplete(args *WorkerArgs, reply *WorkerReply) error
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	taskPtr, ok := c.getTask(args.ID)
-	if !ok {
-		log.Fatalf("task %d not found", args.ID)
+	if args.OptionType == 0 { // Map task completed
+		if args.ID < len(c.tasks) {
+			c.tasks[args.ID].status = 2
+			log.Printf("Coordinator: Map task %d completed successfully", args.ID)
+		}
+	} else if args.OptionType == 1 { // Reduce task completed
+		if status, exists := c.ReduceMap[args.ReduceIndex]; exists && status == 1 {
+			c.ReduceMap[args.ReduceIndex] = 2
+			log.Printf("Coordinator: Reduce task %d completed successfully", args.ReduceIndex)
+		}
 	}
-	if args.OptionType == 0 {
-		taskPtr.status = 2
-	} else {
-		c.ReduceMap[args.ReduceIndex] = true
+
+	return nil
+}
+
+func (c *Coordinator) checkTimeouts() {
+	now := time.Now()
+
+	// Check map task timeouts
+	for i := range c.tasks {
+		if c.tasks[i].status == 1 && now.Sub(c.tasks[i].startTime) > c.mapTimeout {
+			log.Printf("Coordinator: Map task %d timed out, marking as available", c.tasks[i].id)
+			c.tasks[i].status = 0
+		}
+	}
+
+	// Check reduce task timeouts
+	for idx, status := range c.ReduceMap {
+		if status == 1 {
+			if startTime, exists := c.reduceStartTime[idx]; exists && now.Sub(startTime) > c.reduceTimeout {
+				log.Printf("Coordinator: Reduce task %d timed out, marking as available", idx)
+				c.ReduceMap[idx] = 0
+			}
+		}
+	}
+}
+
+func (c *Coordinator) getAvailableMapTask() *task {
+	for i := range c.tasks {
+		if c.tasks[i].status == 0 {
+			return &c.tasks[i]
+		}
 	}
 	return nil
 }
 
-// start a thread that listens for RPCs from worker.go
+func (c *Coordinator) allMapTasksCompleted() bool {
+	for _, task := range c.tasks {
+		if task.status != 2 {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *Coordinator) getAvailableReduceTask() int {
+	for i := 0; i < c.nReduce; i++ {
+		if c.ReduceMap[i] == 0 {
+			return i
+		}
+	}
+	return -1
+}
+
+func (c *Coordinator) allReduceTasksCompleted() bool {
+	for i := 0; i < c.nReduce; i++ {
+		if c.ReduceMap[i] != 2 {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *Coordinator) Done() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.mapPhaseComplete && c.reducePhaseComplete
+}
+
 func (c *Coordinator) server() {
 	rpc.Register(c)
 	rpc.HandleHTTP()
-	//l, e := net.Listen("tcp", ":1234")
 	sockname := coordinatorSock()
 	os.Remove(sockname)
 	l, e := net.Listen("unix", sockname)
@@ -98,63 +213,4 @@ func (c *Coordinator) server() {
 		log.Fatal("listen error:", e)
 	}
 	go http.Serve(l, nil)
-}
-
-// main/mrcoordinator.go calls Done() periodically to find out
-// if the entire job has finished.
-func (c *Coordinator) Done() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	for _, flag := range c.ReduceMap {
-		if !flag {
-			return false
-		}
-	}
-	return true
-}
-
-// create a Coordinator.
-// main/mrcoordinator.go calls this function.
-// NumReduce is the number of reduce tasks to use.
-func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{}
-
-	// Your code here.
-	c.files = files
-	c.nReduce = nReduce
-	c.initCoordinator()
-
-	c.server()
-	return &c
-}
-
-func (c *Coordinator) initCoordinator() {
-	for _, file := range c.files {
-		c.tasks = append(c.tasks, task{id: len(c.tasks), file: file, status: 0})
-	}
-	c.ReduceMap = make(map[int]bool)
-	for i := range c.nReduce {
-		c.ReduceMap[i] = false
-	}
-}
-
-func (c *Coordinator) getTask(id int) (*task, bool) {
-	for i := range c.tasks {
-		if c.tasks[i].id == id {
-			return &c.tasks[i], true
-		}
-	}
-	return nil, false
-}
-
-func (c *Coordinator) doneByStage(stage int) bool {
-	res := true
-	for i := range c.tasks {
-		if c.tasks[i].status < stage {
-			res = false
-			break
-		}
-	}
-	return res
 }
