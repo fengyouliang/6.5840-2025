@@ -2,7 +2,7 @@ package lock
 
 import (
 	"fmt"
-	//	"log"
+	"log"
 	"strconv"
 	"testing"
 	"time"
@@ -28,7 +28,7 @@ func oneClient(t *testing.T, me int, ck kvtest.IKVClerk, done chan struct{}) kvt
 		default:
 			lk.Acquire()
 
-			// log.Printf("%d: acquired lock", me)
+			log.Printf("%d: acquired lock", me)
 
 			b := strconv.Itoa(me)
 			val, ver, err := ck.Get("l0")
@@ -52,7 +52,7 @@ func oneClient(t *testing.T, me int, ck kvtest.IKVClerk, done chan struct{}) kvt
 				t.Fatalf("%d: put failed %v", me, err)
 			}
 
-			// log.Printf("%d: release lock", me)
+			log.Printf("%d: release lock", me)
 
 			lk.Release()
 		}
