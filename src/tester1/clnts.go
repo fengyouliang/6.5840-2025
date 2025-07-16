@@ -1,6 +1,7 @@
 package tester
 
 import (
+	"log"
 	//"log"
 	"sync"
 
@@ -66,7 +67,7 @@ func (clnt *Clnt) makeEnd(server string) end {
 func (clnt *Clnt) Call(server, method string, args interface{}, reply interface{}) bool {
 	end := clnt.makeEnd(server)
 	ok := end.end.Call(method, args, reply)
-	// log.Printf("%p: Call done e %v m %v %v %v ok %v", clnt, end.name, method, args, reply, ok)
+	log.Printf("%p: Call done e %v m %v %v %v ok %v", clnt, end.name, method, args, reply, ok)
 	return ok
 }
 
