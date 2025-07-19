@@ -154,13 +154,18 @@ type RequestVoteReply struct {
 
 // example RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
+
+	// Receiver implementation:
+	// 1. Reply false if term < currentTerm (§5.1)
+	// 2. If votedFor is null or candidateId, and candidate’s log is at least as up-to-date as receiver’s log, grant vote (§5.2, §5.4)
+
 	// Your code here (3A, 3B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	reply.Term = rf.currentTerm
 	reply.VoteGranted = false
 
-	if args.Term < rf.currentTerm {
+	if args.Term < rf.currentTerm { // implementation 1
 		log.Printf("Term: %d Current: %d RequestVote from server %d, term < currentTerm  %#v, %#v", rf.currentTerm, rf.me, args.CandidateId, args, reply)
 		return
 	}
@@ -173,11 +178,11 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	reply.Term = rf.currentTerm
 
-	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
+	if rf.votedFor == -1 || rf.votedFor == args.CandidateId { // implementation 2
 		rf.votedFor = args.CandidateId
 
 		reply.VoteGranted = true
-		rf.resetElectionTimer()
+		// rf.resetElectionTimer()
 		log.Printf("Term: %d, Current: %d RequestVote from server %d, votedFor %d", rf.currentTerm, rf.me, args.CandidateId, args.CandidateId)
 	}
 	return
@@ -238,15 +243,21 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	// Receiver implementation:
+	// 1. Reply false if term < currentTerm (§5.1)
+	// 2. Reply false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm (§5.3)
+	// 3. If an existing entry conflicts with a new one (same index but different terms), delete the existing entry and all that follow it (§5.3)
+	// 4. Append any new entries not already in the log
+	// 5. If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
+
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	log.Printf("Term: %d, Current: %d, recvice from %d args: %#v", rf.currentTerm, rf.me, args.LeaderId, args)
 
 	reply.Term = rf.currentTerm
 	reply.Success = false
-	rf.resetElectionTimer()
 
-	if args.Term < rf.currentTerm {
+	if args.Term < rf.currentTerm { // implementation 1
 		log.Printf("Term: %d, Current: %d, Leader %d's term %d < currentTerm %d. Reply false.", rf.currentTerm, rf.me, args.LeaderId, args.Term, rf.currentTerm)
 		return
 	}
@@ -258,6 +269,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.NodeState = Follower
 	reply.Term = rf.currentTerm
 	reply.Success = true
+	rf.resetElectionTimer()
 }
 
 // the service using Raft (e.g. a k/v server) wants to start
@@ -308,10 +320,11 @@ func (rf *Raft) ticker() {
 		select {
 		case <-rf.electionTimer.C:
 			rf.mu.Lock()
-			if rf.NodeState != Leader {
+			state := rf.NodeState
+			rf.mu.Unlock()
+			if state != Leader {
 				go rf.startElection()
 			}
-			rf.mu.Unlock()
 		}
 	}
 }
@@ -324,11 +337,11 @@ func (rf *Raft) startElection() {
 		return
 	}
 
-	rf.NodeState = Candidate
-	rf.currentTerm++
-	rf.votedFor = rf.me
+	rf.NodeState = Candidate // Conversion to candidate
+	rf.currentTerm++         // Increment currentTerm
+	rf.votedFor = rf.me      // Vote for self
 	currentTerm := rf.currentTerm
-	rf.resetElectionTimer()
+	rf.resetElectionTimer() // Reset election timer
 
 	log.Printf("Term: %d, Current: %d start election", rf.currentTerm, rf.me)
 	rf.mu.Unlock()
@@ -358,16 +371,18 @@ func (rf *Raft) startElection() {
 			}
 
 			if reply.Term > rf.currentTerm {
+				// If RPC request or response contains term T > currentTerm: set currentTerm = T, convert to follower (§5.1)
 				rf.currentTerm = reply.Term
 				rf.votedFor = -1
 				rf.NodeState = Follower
-				rf.resetElectionTimer()
+				// rf.resetElectionTimer()
 				return
 			}
 
 			if reply.VoteGranted && reply.Term == currentTerm {
 				votes := atomic.AddInt32(&votes, 1)
 				if votes >= majority && rf.NodeState == Candidate && rf.currentTerm == currentTerm {
+					// If votes received from majority of servers: become leader
 					rf.NodeState = Leader
 					log.Printf("Term: %d, Current: %d become leader", rf.currentTerm, rf.me)
 
@@ -376,6 +391,8 @@ func (rf *Raft) startElection() {
 			}
 		}(i)
 	}
+	// 没有获取到大部分的投票，等待下一次的选举超时
+	// If election timeout elapses: start new election
 }
 
 func (rf *Raft) sendHeartbeat() {
@@ -389,12 +406,13 @@ func (rf *Raft) sendHeartbeat() {
 		currentTerm := rf.currentTerm
 		rf.mu.Unlock()
 
+		args := &AppendEntriesArgs{currentTerm, rf.me, -1, -1, nil, -1}
+
 		for i := range rf.peers {
 			if i == rf.me {
 				continue
 			}
 			go func() {
-				args := &AppendEntriesArgs{currentTerm, rf.me, -1, -1, nil, -1}
 				reply := &AppendEntriesReply{}
 				ok := rf.sendAppendEntries(i, args, reply)
 
@@ -404,7 +422,7 @@ func (rf *Raft) sendHeartbeat() {
 						rf.currentTerm = reply.Term
 						rf.votedFor = -1
 						rf.NodeState = Follower
-						rf.resetElectionTimer()
+						// rf.resetElectionTimer()
 					}
 					rf.mu.Unlock()
 				}
