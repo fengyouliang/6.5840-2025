@@ -1,7 +1,8 @@
 package tester
 
 import (
-	//"log"
+	"log"
+	// "log"
 	"strconv"
 	"sync"
 
@@ -153,7 +154,7 @@ func (sg *ServerGrp) cleanup() {
 
 // attach server i to servers listed in to caller must hold cfg.mu.
 func (sg *ServerGrp) connect(i int, to []int) {
-	//log.Printf("connect peer %d to %v\n", i, to)
+	log.Printf("connect peer %d to %v\n", i, to)
 
 	sg.connected[i] = true
 
@@ -163,7 +164,7 @@ func (sg *ServerGrp) connect(i int, to []int) {
 	// connect incoming end points to me
 	for j := 0; j < len(to); j++ {
 		if sg.IsConnected(to[j]) {
-			//log.Printf("connect %d (%v) to %d", to[j], sg.srvs[to[j]].endNames[i], i)
+			log.Printf("connect %d (%v) to %d", to[j], sg.srvs[to[j]].endNames[i], i)
 			endname := sg.srvs[to[j]].endNames[i]
 			sg.net.Enable(endname, true)
 		}
@@ -173,7 +174,7 @@ func (sg *ServerGrp) connect(i int, to []int) {
 // detach server from the servers listed in from
 // caller must hold cfg.mu
 func (sg *ServerGrp) disconnect(i int, from []int) {
-	// log.Printf("%p: disconnect peer %d from %v\n", sg, i, from)
+	log.Printf("%p: disconnect peer %d from %v\n", sg, i, from)
 
 	sg.mu.Lock()
 	sg.connected[i] = false
@@ -187,7 +188,7 @@ func (sg *ServerGrp) disconnect(i int, from []int) {
 		s := sg.srvs[from[j]]
 		if s.endNames != nil {
 			endname := s.endNames[i]
-			// log.Printf("%p: disconnect: %v", sg, endname)
+			log.Printf("%p: disconnect: %v", sg, endname)
 			sg.net.Enable(endname, false)
 		}
 	}
@@ -253,7 +254,7 @@ func (sg *ServerGrp) StartServers() {
 
 // Shutdown a server by isolating it
 func (sg *ServerGrp) ShutdownServer(i int) {
-	//log.Printf("ShutdownServer %v", ServerName(sg.gid, i))
+	log.Printf("ShutdownServer %v", ServerName(sg.gid, i))
 	sg.disconnect(i, sg.all())
 
 	// disable client connections to the server.
@@ -300,7 +301,7 @@ func (sg *ServerGrp) MakePartition(l int) ([]int, []int) {
 }
 
 func (sg *ServerGrp) Partition(p1 []int, p2 []int) {
-	//log.Printf("partition servers into: %v %v\n", p1, p2)
+	// log.Printf("partition servers into: %v %v\n", p1, p2)
 	for i := 0; i < len(p1); i++ {
 		sg.disconnect(p1[i], p2)
 		sg.connect(p1[i], p1)
