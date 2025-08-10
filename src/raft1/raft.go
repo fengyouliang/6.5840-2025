@@ -166,7 +166,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.VoteGranted = false
 
 	if args.Term < rf.currentTerm { // implementation 1
-		log.Printf("Term: %d Current: %d RequestVote from server %d, term < currentTerm  %#v, %#v", rf.currentTerm, rf.me, args.CandidateId, args, reply)
+		DPrintf("Term: %d Current: %d RequestVote from server %d, term < currentTerm  %#v, %#v", rf.currentTerm, rf.me, args.CandidateId, args, reply)
 		return
 	}
 
@@ -183,7 +183,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 		reply.VoteGranted = true
 		// rf.resetElectionTimer()
-		log.Printf("Term: %d, Current: %d RequestVote from server %d, votedFor %d", rf.currentTerm, rf.me, args.CandidateId, args.CandidateId)
+		DPrintf("Term: %d, Current: %d RequestVote from server %d, votedFor %d", rf.currentTerm, rf.me, args.CandidateId, args.CandidateId)
 	}
 	return
 
@@ -218,9 +218,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // the struct itself.
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 	// rf.currentTerm 这里缺少了锁，所以还是不要print了
-	// log.Printf("Term: %d, Current: %d sendRequestVote request to %d, %#v, %#v", rf.currentTerm, rf.me, server, args, reply)
+	// Dprintf("Term: %d, Current: %d sendRequestVote request to %d, %#v, %#v", rf.currentTerm, rf.me, server, args, reply)
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
-	// log.Printf("Term: %d, Current: %d sendRequestVote response from %d, %#v, %#v", rf.currentTerm, rf.me, server, args, reply)
+	// Dprintf("Term: %d, Current: %d sendRequestVote response from %d, %#v, %#v", rf.currentTerm, rf.me, server, args, reply)
 	return ok
 }
 
@@ -252,13 +252,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	log.Printf("Term: %d, Current: %d, recvice from %d args: %#v", rf.currentTerm, rf.me, args.LeaderId, args)
+	DPrintf("Term: %d, Current: %d, recvice from %d args: %#v", rf.currentTerm, rf.me, args.LeaderId, args)
 
 	reply.Term = rf.currentTerm
 	reply.Success = false
 
 	if args.Term < rf.currentTerm { // implementation 1
-		log.Printf("Term: %d, Current: %d, Leader %d's term %d < currentTerm %d. Reply false.", rf.currentTerm, rf.me, args.LeaderId, args.Term, rf.currentTerm)
+		DPrintf("Term: %d, Current: %d, Leader %d's term %d < currentTerm %d. Reply false.", rf.currentTerm, rf.me, args.LeaderId, args.Term, rf.currentTerm)
 		return
 	}
 	if args.Term > rf.currentTerm {
@@ -343,7 +343,7 @@ func (rf *Raft) startElection() {
 	currentTerm := rf.currentTerm
 	rf.resetElectionTimer() // Reset election timer
 
-	log.Printf("Term: %d, Current: %d start election", rf.currentTerm, rf.me)
+	DPrintf("Term: %d, Current: %d start election", rf.currentTerm, rf.me)
 	rf.mu.Unlock()
 
 	args := &RequestVoteArgs{currentTerm, rf.me, -1, -1}
@@ -384,7 +384,7 @@ func (rf *Raft) startElection() {
 				if votes >= majority && rf.NodeState == Candidate && rf.currentTerm == currentTerm {
 					// If votes received from majority of servers: become leader
 					rf.NodeState = Leader
-					log.Printf("Term: %d, Current: %d become leader", rf.currentTerm, rf.me)
+					DPrintf("Term: %d, Current: %d become leader", rf.currentTerm, rf.me)
 
 					go rf.sendHeartbeat()
 				}
