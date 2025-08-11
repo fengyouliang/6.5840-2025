@@ -586,6 +586,9 @@ func (rf *Raft) startElection() {
 				rf.votedFor = -1
 				rf.NodeState = Follower
 				// rf.resetElectionTimer()
+				// 此时不知道有没有leader，当且仅当有leader的时候重置
+				// 1. receive appendEntries from leader, reset election timer
+				// 2. vote to someone, reset election timer
 				return
 			}
 
@@ -595,6 +598,13 @@ func (rf *Raft) startElection() {
 					// If votes received from majority of servers: become leader
 					rf.NodeState = Leader
 					DPrintf("Term: %d, Current: %d become leader", rf.currentTerm, rf.me)
+
+					// reset nextIndex and matchIndex for all servers
+					lastLogIdx := rf.lastLogIndex()
+					for i := range rf.peers {
+						rf.nextIndex[i] = lastLogIdx + 1
+						rf.matchIndex[i] = 0
+					}
 
 					go rf.sendHeartbeat()
 				}
