@@ -59,7 +59,6 @@ type Raft struct {
 	// Volatile satte on leaders
 	nextIndex  []int
 	matchIndex []int
-	quorum     uint32
 
 	// internal
 	NodeState NodeState
@@ -394,14 +393,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.matchIndex[rf.me] = len(rf.log)
 
 	DPrintf("Term: %d, Current: %d, Start command: %#v, index: %d", rf.currentTerm, rf.me, command, index)
-
-	// Send AppendEntries to all other servers
-	// go rf.sendAppendEntriesToAll()
-
 	return index, term, isLeader
 }
 
-// updateCommitIndex updates the commitIndex based on matchIndex values
 func (rf *Raft) updateCommitIndex() {
 	// Find the highest index that a majority of servers have matched
 	for i := len(rf.log); i > rf.commitIndex; i-- {
@@ -687,7 +681,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.lastApplied = 0
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
-	rf.quorum = uint32(len(rf.peers) / 2)
 	for i := 0; i < len(peers); i++ {
 		rf.nextIndex[i] = 1 // Next index should start at 1 (first log entry)
 		rf.matchIndex[i] = 0
